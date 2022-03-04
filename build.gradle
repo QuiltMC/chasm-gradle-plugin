@@ -4,7 +4,7 @@ plugins {
 }
 
 group 'org.quiltmc.chasm'
-version '0.0.1'
+version '0.0.1' + (System.getenv('SNAPSHOTS_URL') ? "-SNAPSHOT" : "")
 
 gradlePlugin {
     plugins {
@@ -33,7 +33,7 @@ dependencies {
 publishing {
     repositories {
         maven {
-            name = 'quiltSnapshot'
+            name = 'quilt'
             url = System.getenv('SNAPSHOTS_URL')
 
             credentials {
@@ -44,9 +44,7 @@ publishing {
     }
 
     publications {
-        snapshot(MavenPublication) {
-            version = project.version + "-SNAPSHOT"
-
+        chasmPlugin(MavenPublication) {
             from components.java
         }
     }

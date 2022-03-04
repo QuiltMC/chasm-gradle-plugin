@@ -18,7 +18,7 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
     - name: Publish snapshot
-      run: ./gradlew publishSnapshotPublicationToQuiltSnapshotRepository publishChasmPluginMarkerMavenPublicationToQuiltSnapshotRepository --stacktrace
+      run: ./gradlew publishChasmPluginPublicationToQuiltRepository publishChasmPluginMarkerMavenPublicationToQuiltRepository --stacktrace
       env:
         SNAPSHOTS_URL: ${{ secrets.SNAPSHOTS_URL }}
         SNAPSHOTS_USERNAME: ${{ secrets.SNAPSHOTS_USERNAME }}
