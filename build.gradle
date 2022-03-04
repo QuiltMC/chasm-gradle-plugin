@@ -1,0 +1,53 @@
+plugins {
+    id 'java-gradle-plugin'
+    id 'maven-publish'
+}
+
+group 'org.quiltmc.chasm'
+version '0.0.1-SNAPSHOT'
+
+gradlePlugin {
+    plugins {
+        chasm {
+            id = 'org.quiltmc.chasm'
+            implementationClass = 'org.quiltmc.chasm.gradle.ChasmPlugin'
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = "Quilt Snapshot Maven"
+        url = "https://maven.quiltmc.org/repository/snapshot"
+    }
+}
+
+dependencies {
+    implementation "org.quiltmc.chasm:chasm-lang:0.0.1-SNAPSHOT"
+    implementation "org.quiltmc.chasm:chasm:0.0.1-SNAPSHOT"
+
+    implementation 'org.ow2.asm:asm:9.2'
+}
+
+publishing {
+    repositories {
+        maven {
+            name = 'quiltSnapshot'
+            url = System.getenv('SNAPSHOTS_URL')
+
+            credentials {
+                username = System.getenv('SNAPSHOTS_USERNAME')
+                password = System.getenv('SNAPSHOTS_PASSWORD')
+            }
+        }
+    }
+
+    publications {
+        snapshot(MavenPublication) {
+            version = project.version + "-SNAPSHOT"
+
+            from components.java
+        }
+    }
+}
