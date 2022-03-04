@@ -8,6 +8,7 @@ import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.Dependency;
 import org.gradle.api.file.FileCollection;
+import org.gradle.api.plugins.JvmEcosystemPlugin;
 import org.gradle.api.tasks.JavaExec;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.SourceSetContainer;
@@ -23,8 +24,13 @@ public class ChasmPlugin implements Plugin<Project> {
      */
     @Override
     public void apply(Project project) {
+        // The JvmEcosystemPlugin provides the SourceSetContainerExtension
+        project.getPluginManager().apply(JvmEcosystemPlugin.class);
+
+        // Transform all AbstractCompile tasks
         project.getTasks().withType(JavaExec.class, ChasmPlugin::transformClasspath);
 
+        // Transform all SourceSets
         project.getExtensions().configure(SourceSetContainer.class, sourceSets ->
                 sourceSets.configureEach(sourceSet -> transformClasspath(project, sourceSet))
         );
