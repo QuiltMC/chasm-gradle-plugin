@@ -17,6 +17,7 @@ import java.util.zip.ZipOutputStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.artifacts.dsl.DependencyHandler;
+import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.provider.Property;
@@ -30,15 +31,23 @@ import org.quiltmc.chasm.api.metadata.Metadata;
 import org.quiltmc.chasm.api.metadata.MetadataProvider;
 import org.quiltmc.chasm.api.util.ClassLoaderClassInfoProvider;
 import org.quiltmc.chasm.lang.ChasmLangTransformer;
+import org.quiltmc.chasm.lang.Evaluator;
+import org.quiltmc.chasm.lang.Intrinsics;
+import org.quiltmc.chasm.lang.op.Expression;
 
 public abstract class ChasmTask extends DefaultTask {
+    private final ConfigurableFileCollection classpath = getProject().files();
+    private final ConfigurableFileCollection transformers = getProject().files();
+
     /**
      * Specifies the classpath to transform.
      *
      * @return The input classpath.
      */
     @InputFiles
-    public abstract Property<FileCollection> getClasspath();
+    public ConfigurableFileCollection getClasspath() {
+        return classpath;
+    }
 
     /**
      * Specifies additional transformers that are not found on the classpath.
@@ -46,7 +55,9 @@ public abstract class ChasmTask extends DefaultTask {
      * @return Additional transformers.
      */
     @InputFiles
-    public abstract Property<FileCollection> getTransformers();
+    public ConfigurableFileCollection getTransformers() {
+        return transformers;
+    }
 
     /**
      * Specifies the directory in which to store the transformed classpath.
@@ -70,8 +81,6 @@ public abstract class ChasmTask extends DefaultTask {
     }
 
     public ChasmTask() {
-        getClasspath().convention(getProject().files());
-        getTransformers().convention(getProject().files());
         getOutputDirectory().convention(getProject().getLayout().getBuildDirectory().dir("chasm/" + getName()));
     }
 
@@ -85,6 +94,9 @@ public abstract class ChasmTask extends DefaultTask {
         ChasmProcessor processor =
                 new ChasmProcessor(new ClassLoaderClassInfoProvider(null, getClass().getClassLoader()));
 
+        Evaluator evaluator = new Evaluator();
+        evaluator.getScope().push(Intrinsics.SCOPE);
+
         // Collect close-ables to close later
         Set<Closeable> toClose = new HashSet<>();
 
@@ -95,7 +107,7 @@ public abstract class ChasmTask extends DefaultTask {
         Path otherRoot = outDirectory.resolve("other");
 
         // Process classpath
-        for (File file : getClasspath().get()) {
+        for (File file : classpath) {
             // File may be either a jar, a zip or a directory
             if (file.isDirectory()) {
                 // Walk files in directory with relative path
@@ -115,7 +127,8 @@ public abstract class ChasmTask extends DefaultTask {
                     } else {
                         if (relative.startsWith("org/quiltmc/chasm/transformers/") && fileName.endsWith(".chasm")) {
                             // Add transformers to the processor
-                            ChasmLangTransformer transformer = ChasmLangTransformer.parse(sourcePath);
+                            Expression expression = Expression.parse(CharStreams.fromPath(sourcePath));
+                            ChasmLangTransformer transformer = new ChasmLangTransformer(evaluator, expression);
                             processor.addTransformer(transformer);
                         }
 
@@ -154,7 +167,8 @@ public abstract class ChasmTask extends DefaultTask {
                     } else {
                         if (fileName.startsWith("org/quiltmc/chasm/transformers/") && fileName.endsWith(".chasm")) {
                             // Add transformers to the processor
-                            ChasmLangTransformer transformer = ChasmLangTransformer.parse(new String(bytes));
+                            Expression expression = Expression.parse(CharStreams.fromString(new String(bytes)));
+                            ChasmLangTransformer transformer = new ChasmLangTransformer(evaluator, expression);
                             processor.addTransformer(transformer);
                         }
 
@@ -173,9 +187,11 @@ public abstract class ChasmTask extends DefaultTask {
         }
 
         // Add explicitly specified transformers
-        for (File transformerFile : getTransformers().get()) {
+        for (File transformerFile : transformers) {
             InputStream inputStream = new FileInputStream(transformerFile);
-            processor.addTransformer(ChasmLangTransformer.parse(CharStreams.fromStream(inputStream)));
+            Expression expression = Expression.parse(CharStreams.fromStream(inputStream));
+            ChasmLangTransformer transformer = new ChasmLangTransformer(evaluator, expression);
+            processor.addTransformer(transformer);
         }
 
         // Process the classes

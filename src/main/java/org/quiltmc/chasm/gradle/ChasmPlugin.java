@@ -94,8 +94,8 @@ public class ChasmPlugin implements Plugin<Project> {
         Configuration configuration = project.getConfigurations().detachedConfiguration(dependency);
 
         project.afterEvaluate(p -> {
-            task.getClasspath().set(inClasspath.get());
-            task.getTransformers().set(transformers.get());
+            task.getClasspath().from(inClasspath.get());
+            task.getTransformers().from(transformers.get());
             outClasspath.accept(configuration);
         });
     }
