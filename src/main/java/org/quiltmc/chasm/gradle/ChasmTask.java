@@ -8,10 +8,13 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 import org.antlr.v4.runtime.CharStreams;
@@ -20,7 +23,6 @@ import org.gradle.api.artifacts.dsl.DependencyHandler;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.FileCollection;
-import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.OutputDirectory;
 import org.gradle.api.tasks.TaskAction;
@@ -77,7 +79,7 @@ public abstract class ChasmTask extends DefaultTask {
     public static FileCollection getFiles(ChasmTask task) {
         return task.getOutputDirectory().getAsFileTree()
                 .matching(patternFilterable -> patternFilterable.include("*"))
-                .plus(task.getProject().files(task.getOutputDirectory().dir("other")));
+                .plus(task.getProject().files(task.getOutputDirectory().dir("chasm-added-files")));
     }
 
     public ChasmTask() {
@@ -104,7 +106,7 @@ public abstract class ChasmTask extends DefaultTask {
         Path outDirectory = getOutputDirectory().getAsFile().get().toPath();
         getProject().delete(outDirectory);
 
-        Path otherRoot = outDirectory.resolve("other");
+        Path otherRoot = outDirectory.resolve("chasm-added-files");
 
         // Process classpath
         for (File file : classpath) {
@@ -139,8 +141,9 @@ public abstract class ChasmTask extends DefaultTask {
                     }
                 }
             } else if (file.getName().endsWith(".jar")) {
-                // Open jar/zip
-                ZipInputStream zipInputStream = new ZipInputStream(new FileInputStream(file));
+                // Open jar
+                // TODO: Use target JDK
+                JarFile jarFile = new JarFile(file, false, ZipFile.OPEN_READ, Runtime.version());
 
                 // Create target jar/zip
                 Path targetPath = outDirectory.resolve(file.getName());
@@ -148,14 +151,15 @@ public abstract class ChasmTask extends DefaultTask {
                 ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(targetPath));
                 toClose.add(zipOutputStream);
 
-                ZipEntry entry;
-                while ((entry = zipInputStream.getNextEntry()) != null) {
+                Iterator<JarEntry> jarIterator = jarFile.versionedStream().iterator();
+                while (jarIterator.hasNext()) {
+                    ZipEntry entry = jarIterator.next();
                     if (entry.isDirectory()) {
                         continue;
                     }
 
                     String fileName = entry.getName();
-                    byte[] bytes = zipInputStream.readAllBytes();
+                    byte[] bytes = jarFile.getInputStream(entry).readAllBytes();
 
                     if (fileName.endsWith(".class")) {
 
@@ -177,14 +181,13 @@ public abstract class ChasmTask extends DefaultTask {
                         zipOutputStream.write(bytes);
                     }
                 }
-
-                // Close input stream
-                zipInputStream.close();
             } else {
+                // TODO: Zip and unsupported entries
                 // Unsupported
                 continue;
             }
         }
+
 
         // Add explicitly specified transformers
         for (File transformerFile : transformers) {
