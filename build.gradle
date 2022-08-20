@@ -4,7 +4,7 @@ plugins {
 }
 
 group 'org.quiltmc.chasm'
-version '0.0.1' + (System.getenv('SNAPSHOTS_URL') ? "-SNAPSHOT" : "")
+version '0.1.0' + (System.getenv('SNAPSHOTS_URL') ? "-SNAPSHOT" : "")
 
 gradlePlugin {
     plugins {
@@ -24,8 +24,8 @@ repositories {
 }
 
 dependencies {
-    implementation "org.quiltmc.chasm:chasm-lang:0.0.1-SNAPSHOT"
-    implementation "org.quiltmc.chasm:chasm:0.0.1-SNAPSHOT"
+    implementation "org.quiltmc.chasm:chasm:0.1.0-SNAPSHOT"
+    implementation "org.quiltmc.chasm:chassembly:0.1.0-SNAPSHOT"
 
     implementation 'org.ow2.asm:asm:9.2'
 }

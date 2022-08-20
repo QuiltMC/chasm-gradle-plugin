@@ -1,23 +1,24 @@
 package org.quiltmc.chasm.gradle;
 
-import java.io.Closeable;
+import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
-import org.antlr.v4.runtime.CharStreams;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.artifacts.dsl.DependencyHandler;
 import org.gradle.api.file.ConfigurableFileCollection;
@@ -29,13 +30,10 @@ import org.gradle.api.tasks.TaskAction;
 import org.objectweb.asm.ClassReader;
 import org.quiltmc.chasm.api.ChasmProcessor;
 import org.quiltmc.chasm.api.ClassData;
-import org.quiltmc.chasm.api.metadata.Metadata;
-import org.quiltmc.chasm.api.metadata.MetadataProvider;
 import org.quiltmc.chasm.api.util.ClassLoaderClassInfoProvider;
-import org.quiltmc.chasm.lang.ChasmLangTransformer;
-import org.quiltmc.chasm.lang.Evaluator;
-import org.quiltmc.chasm.lang.Intrinsics;
-import org.quiltmc.chasm.lang.op.Expression;
+import org.quiltmc.chasm.internal.transformer.ChasmLangTransformer;
+import org.quiltmc.chasm.lang.api.ast.Node;
+import org.quiltmc.chasm.lang.api.metadata.Metadata;
 
 public abstract class ChasmTask extends DefaultTask {
     private final ConfigurableFileCollection classpath = getProject().files();
@@ -96,11 +94,8 @@ public abstract class ChasmTask extends DefaultTask {
         ChasmProcessor processor =
                 new ChasmProcessor(new ClassLoaderClassInfoProvider(null, getClass().getClassLoader()));
 
-        Evaluator evaluator = new Evaluator();
-        evaluator.getScope().push(Intrinsics.SCOPE);
-
         // Collect close-ables to close later
-        Set<Closeable> toClose = new HashSet<>();
+        Map<ZipOutputStream, List<ZipWriteJob>> writeJobMap = new HashMap<>();
 
         // Delete output directory
         Path outDirectory = getOutputDirectory().getAsFile().get().toPath();
@@ -129,8 +124,8 @@ public abstract class ChasmTask extends DefaultTask {
                     } else {
                         if (relative.startsWith("org/quiltmc/chasm/transformers/") && fileName.endsWith(".chasm")) {
                             // Add transformers to the processor
-                            Expression expression = Expression.parse(CharStreams.fromPath(sourcePath));
-                            ChasmLangTransformer transformer = new ChasmLangTransformer(evaluator, expression);
+                            Node parsed = Node.parse(sourcePath);
+                            ChasmLangTransformer transformer = new ChasmLangTransformer(relative.toString(), parsed);
                             processor.addTransformer(transformer);
                         }
 
@@ -148,8 +143,8 @@ public abstract class ChasmTask extends DefaultTask {
                 // Create target jar/zip
                 Path targetPath = outDirectory.resolve(file.getName());
                 Files.createDirectories(targetPath.getParent());
-                ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(targetPath));
-                toClose.add(zipOutputStream);
+                ZipOutputStream zipOutputStream = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(targetPath)));
+                writeJobMap.put(zipOutputStream, new ArrayList<>());
 
                 Iterator<JarEntry> jarIterator = jarFile.versionedStream().iterator();
                 while (jarIterator.hasNext()) {
@@ -164,21 +159,23 @@ public abstract class ChasmTask extends DefaultTask {
                     if (fileName.endsWith(".class")) {
 
                         // Add class files to the processor
-                        MetadataProvider metadataProvider = new MetadataProvider();
-                        metadataProvider.put(TargetZipMetadata.class, new TargetZipMetadata(zipOutputStream));
-                        ClassData classData = new ClassData(bytes, metadataProvider);
+                        Metadata metadata = new Metadata();
+                        metadata.put(TargetZipMetadata.class, new TargetZipMetadata(zipOutputStream));
+                        ClassData classData = new ClassData(bytes, metadata);
                         processor.addClass(classData);
                     } else {
                         if (fileName.startsWith("org/quiltmc/chasm/transformers/") && fileName.endsWith(".chasm")) {
                             // Add transformers to the processor
-                            Expression expression = Expression.parse(CharStreams.fromString(new String(bytes)));
-                            ChasmLangTransformer transformer = new ChasmLangTransformer(evaluator, expression);
+                            Node parsed = Node.parse(new String(bytes));
+                            ChasmLangTransformer transformer = new ChasmLangTransformer(fileName, parsed);
                             processor.addTransformer(transformer);
                         }
 
                         // Copy remaining files directly (including transformers)
-                        zipOutputStream.putNextEntry(entry);
-                        zipOutputStream.write(bytes);
+                        writeJobMap.get(zipOutputStream).add(outputStream -> {
+                            outputStream.putNextEntry(entry);
+                            outputStream.write(bytes);
+                        });
                     }
                 }
             } else {
@@ -188,12 +185,12 @@ public abstract class ChasmTask extends DefaultTask {
             }
         }
 
+        System.out.println("Unnecessary Zip jobs: " + writeJobMap.values().stream().map(List::size).reduce(Integer::sum));
 
         // Add explicitly specified transformers
         for (File transformerFile : transformers) {
-            InputStream inputStream = new FileInputStream(transformerFile);
-            Expression expression = Expression.parse(CharStreams.fromStream(inputStream));
-            ChasmLangTransformer transformer = new ChasmLangTransformer(evaluator, expression);
+            Node parsed = Node.parse(transformerFile.toPath());
+            ChasmLangTransformer transformer = new ChasmLangTransformer(transformerFile.toString(), parsed);
             processor.addTransformer(transformer);
         }
 
@@ -202,7 +199,7 @@ public abstract class ChasmTask extends DefaultTask {
 
         // Write the resulting classes
         for (ClassData classData : classes) {
-            TargetZipMetadata targetMetadata = classData.getMetadataProvider().get(TargetZipMetadata.class);
+            TargetZipMetadata targetMetadata = classData.getMetadata().get(TargetZipMetadata.class);
             ClassReader classReader = new ClassReader(classData.getClassBytes());
             String path = classReader.getClassName() + ".class";
 
@@ -211,21 +208,30 @@ public abstract class ChasmTask extends DefaultTask {
                 Files.createDirectories(targetPath.getParent());
                 Files.write(targetPath, classData.getClassBytes());
             } else {
-                targetMetadata.outputStream().putNextEntry(new ZipEntry(path));
-                targetMetadata.outputStream().write(classData.getClassBytes());
+                writeJobMap.get(targetMetadata.outputStream()).add(outputStream -> {
+                    outputStream.putNextEntry(new ZipEntry(path));
+                    outputStream.write(classData.getClassBytes());
+                });
             }
         }
 
-        // Close everything
-        for (Closeable closeable : toClose) {
-            closeable.close();
-        }
+        System.out.println("Total Zip jobs: " + writeJobMap.values().stream().map(List::size).reduce(Integer::sum));
+
+        writeJobMap.forEach((key, value) -> {
+            try {
+                for (ZipWriteJob zipWriteJob : value) {
+                    zipWriteJob.write(key);
+                }
+                key.close();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
     }
 
-    record TargetZipMetadata(ZipOutputStream outputStream) implements Metadata {
-        @Override
-        public Metadata copy() {
-            return new TargetZipMetadata(outputStream);
-        }
+    record TargetZipMetadata(ZipOutputStream outputStream) { }
+
+    interface ZipWriteJob {
+        void write(ZipOutputStream outputStream) throws IOException;
     }
 }
