@@ -2,9 +2,7 @@ package org.quiltmc.chasm.gradle;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,7 +28,8 @@ import org.gradle.api.tasks.TaskAction;
 import org.objectweb.asm.ClassReader;
 import org.quiltmc.chasm.api.ChasmProcessor;
 import org.quiltmc.chasm.api.ClassData;
-import org.quiltmc.chasm.api.util.ClassLoaderClassInfoProvider;
+import org.quiltmc.chasm.api.Transformer;
+import org.quiltmc.chasm.api.util.ClassLoaderContext;
 import org.quiltmc.chasm.internal.transformer.ChasmLangTransformer;
 import org.quiltmc.chasm.lang.api.ast.Node;
 import org.quiltmc.chasm.lang.api.metadata.Metadata;
@@ -92,7 +91,7 @@ public abstract class ChasmTask extends DefaultTask {
     public void run() throws IOException {
         // TODO: Use target JDK ClassInfo
         ChasmProcessor processor =
-                new ChasmProcessor(new ClassLoaderClassInfoProvider(null, getClass().getClassLoader()));
+                new ChasmProcessor(new ClassLoaderContext(null, getClass().getClassLoader()));
 
         // Collect close-ables to close later
         Map<ZipOutputStream, List<ZipWriteJob>> writeJobMap = new HashMap<>();
@@ -125,7 +124,7 @@ public abstract class ChasmTask extends DefaultTask {
                         if (relative.startsWith("org/quiltmc/chasm/transformers/") && fileName.endsWith(".chasm")) {
                             // Add transformers to the processor
                             Node parsed = Node.parse(sourcePath);
-                            ChasmLangTransformer transformer = new ChasmLangTransformer(relative.toString(), parsed);
+                            Transformer transformer = new ChasmLangTransformer(relative.toString(), parsed, processor.getContext());
                             processor.addTransformer(transformer);
                         }
 
@@ -167,7 +166,7 @@ public abstract class ChasmTask extends DefaultTask {
                         if (fileName.startsWith("org/quiltmc/chasm/transformers/") && fileName.endsWith(".chasm")) {
                             // Add transformers to the processor
                             Node parsed = Node.parse(new String(bytes));
-                            ChasmLangTransformer transformer = new ChasmLangTransformer(fileName, parsed);
+                            ChasmLangTransformer transformer = new ChasmLangTransformer(fileName, parsed, processor.getContext());
                             processor.addTransformer(transformer);
                         }
 
@@ -190,7 +189,7 @@ public abstract class ChasmTask extends DefaultTask {
         // Add explicitly specified transformers
         for (File transformerFile : transformers) {
             Node parsed = Node.parse(transformerFile.toPath());
-            ChasmLangTransformer transformer = new ChasmLangTransformer(transformerFile.toString(), parsed);
+            ChasmLangTransformer transformer = new ChasmLangTransformer(transformerFile.toString(), parsed, processor.getContext());
             processor.addTransformer(transformer);
         }
 
