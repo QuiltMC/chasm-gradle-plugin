@@ -1,9 +1,6 @@
 package org.quiltmc.chasm.gradle;
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -27,9 +24,10 @@ import org.gradle.api.tasks.OutputDirectory;
 import org.gradle.api.tasks.TaskAction;
 import org.objectweb.asm.ClassReader;
 import org.quiltmc.chasm.api.ChasmProcessor;
-import org.quiltmc.chasm.api.ClassData;
+import org.quiltmc.chasm.api.ClassResult;
 import org.quiltmc.chasm.api.Transformer;
-import org.quiltmc.chasm.api.util.ClassLoaderContext;
+import org.quiltmc.chasm.api.util.ClassInfo;
+import org.quiltmc.chasm.api.util.Context;
 import org.quiltmc.chasm.internal.transformer.ChasmLangTransformer;
 import org.quiltmc.chasm.lang.api.ast.Node;
 import org.quiltmc.chasm.lang.api.metadata.Metadata;
@@ -90,8 +88,26 @@ public abstract class ChasmTask extends DefaultTask {
     @TaskAction
     public void run() throws IOException {
         // TODO: Use target JDK ClassInfo
-        ChasmProcessor processor =
-                new ChasmProcessor(new ClassLoaderContext(null, getClass().getClassLoader()));
+        ChasmProcessor processor = new ChasmProcessor(new Context() {
+
+            @Override
+            public ClassInfo getClassInfo(String className) {
+                try {
+                    return ClassInfo.fromClass(Class.forName(className.replace('/', '.'), false, getClass().getClassLoader()));
+                } catch (ClassNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+            @Override
+            public byte[] readFile(String path) {
+                try (InputStream stream = getClass().getClassLoader().getResourceAsStream(path)) {
+                    return stream != null ? stream.readAllBytes() : null;
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        });
 
         // Collect close-ables to close later
         Map<ZipOutputStream, List<ZipWriteJob>> writeJobMap = new HashMap<>();
@@ -118,8 +134,7 @@ public abstract class ChasmTask extends DefaultTask {
                     if (fileName.endsWith(".class")) {
                         // Add class files to the processor
                         byte[] bytes = Files.readAllBytes(sourcePath);
-                        ClassData classData = new ClassData(bytes);
-                        processor.addClass(classData);
+                        processor.addClass(bytes, new Metadata());
                     } else {
                         if (relative.startsWith("org/quiltmc/chasm/transformers/") && fileName.endsWith(".chasm")) {
                             // Add transformers to the processor
@@ -160,8 +175,7 @@ public abstract class ChasmTask extends DefaultTask {
                         // Add class files to the processor
                         Metadata metadata = new Metadata();
                         metadata.put(TargetZipMetadata.class, new TargetZipMetadata(zipOutputStream));
-                        ClassData classData = new ClassData(bytes, metadata);
-                        processor.addClass(classData);
+                        processor.addClass(bytes, metadata);
                     } else {
                         if (fileName.startsWith("org/quiltmc/chasm/transformers/") && fileName.endsWith(".chasm")) {
                             // Add transformers to the processor
@@ -194,10 +208,10 @@ public abstract class ChasmTask extends DefaultTask {
         }
 
         // Process the classes
-        List<ClassData> classes = processor.process();
+        List<ClassResult> classes = processor.process();
 
         // Write the resulting classes
-        for (ClassData classData : classes) {
+        for (ClassResult classData : classes) {
             TargetZipMetadata targetMetadata = classData.getMetadata().get(TargetZipMetadata.class);
             ClassReader classReader = new ClassReader(classData.getClassBytes());
             String path = classReader.getClassName() + ".class";
