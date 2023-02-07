@@ -95,7 +95,7 @@ public abstract class ChasmTask extends DefaultTask {
                 try {
                     return ClassInfo.fromClass(Class.forName(className.replace('/', '.'), false, getClass().getClassLoader()));
                 } catch (ClassNotFoundException e) {
-                    return null;
+                    throw new RuntimeException(e);
                 }
             }
 
@@ -104,7 +104,7 @@ public abstract class ChasmTask extends DefaultTask {
                 try (InputStream stream = getClass().getClassLoader().getResourceAsStream(path)) {
                     return stream != null ? stream.readAllBytes() : null;
                 } catch (IOException e) {
-                    return null;
+                    throw new UncheckedIOException(e);
                 }
             }
         });
